@@ -22,3 +22,57 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Ignore Python compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environment
+venv/
+.env
+*.env
+*.venv
+
+# Ignore uploads (user-generated files)
+*.csv
+*.json
+
+# Ignore log files
+logs/
+*.log
+*.out
+*.err
+
+# Ignore system files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Ignore dependency files
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Ignore IDE-specific files
+.vscode/
+.idea/
+*.iml
+*.sublime-workspace
+*.sublime-project
+
+# Ignore Docker & deployment files
+*.dockerignore
+docker-compose.yml
+.Dockerfile
+
+# Ignore database & cache files
+*.sqlite3
+*.db
+*.sql
+*.bak
+
+# Ignore Jupyter notebooks checkpoint files
+.ipynb_checkpoints/
+

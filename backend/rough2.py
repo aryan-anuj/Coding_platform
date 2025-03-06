@@ -44,7 +44,7 @@ class CodeExecutor:
         code = re.sub(r"'''.*?'''", '', code, flags=re.DOTALL)  # Remove multi-line comments using single quotes
         return code  
      
-    def capture_output(self, code, user_input):
+    def capture_output(self, code, session_globals):
         output = io.StringIO()
         error = None
         images = []
@@ -120,7 +120,7 @@ def execute():
                
         if user_id not in user_sessions:
             user_sessions[user_id] = {}
-            
+
         if session_id not in user_sessions[user_id]:
             user_sessions[user_id][session_id] = {
                 "cells": [],
