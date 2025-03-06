@@ -90,8 +90,39 @@ def get_user_notebooks(user_id):
     
     return jsonify({"notebooks": notebooks_in})
 
+# @app.route('/<user_id>/create_notebook', methods=['POST'])
+# def create_notebook(user_id):
+#     data = request.json
+#     notebook_name = data.get("name", f"Notebook_{user_id}_{int(time.time())}")
+    
+#     # Check if the notebook name already exists for the user
+#     user_data = user_sessions.find_one({"user_id": user_id})
+#     if user_data:
+#         for notebook in user_data.get("notebooks", []):
+#             if notebook["notebook_name"] == notebook_name:
+#                 return jsonify({"error": "Notebook name already exists."}), 400
+    
+#     # Generate a unique notebook ID
+#     notebook_id = f"notebook_{user_id}_{int(time.time())}"
+    
+#     # Create the new notebook
+#     new_notebook = {
+#         "notebook_id": notebook_id,
+#         "notebook_name": notebook_name,
+#         "cells": []
+#     }
+    
+#     # Update the user's notebooks in the database
+#     user_sessions.update_one(
+#         {"user_id": user_id},
+#         {"$push": {"notebooks": new_notebook}},
+#         upsert=True
+#     )
+#     return jsonify({"notebookId": notebook_id, "name": notebook_name})
+
 @app.route('/<user_id>/create_notebook', methods=['POST'])
 def create_notebook(user_id):
+    """Creates a new notebook and initializes the globals dictionary."""
     data = request.json
     notebook_name = data.get("name", f"Notebook_{user_id}_{int(time.time())}")
     
@@ -105,11 +136,12 @@ def create_notebook(user_id):
     # Generate a unique notebook ID
     notebook_id = f"notebook_{user_id}_{int(time.time())}"
     
-    # Create the new notebook
+    # Create the new notebook with an initialized globals dictionary
     new_notebook = {
         "notebook_id": notebook_id,
         "notebook_name": notebook_name,
-        "cells": []
+        "cells": [],
+        "globals": {}  # Initialize without __builtins__
     }
     
     # Update the user's notebooks in the database
@@ -120,15 +152,38 @@ def create_notebook(user_id):
     )
     return jsonify({"notebookId": notebook_id, "name": notebook_name})
 
+# @app.route('/<user_id>/<notebook_id>', methods=['GET'])
+# def load_notebook(user_id, notebook_id):
+#     user_data = user_sessions.find_one({"user_id": user_id})
+#     if not user_data:
+#         return jsonify({"error": "Notebook not found."}), 404
+    
+#     notebook = next((nb for nb in user_data["notebooks"] if nb["notebook_id"] == notebook_id), None)
+#     if not notebook:
+#         return jsonify({"error": "Notebook not found."}), 404
+#     return jsonify({"cells": notebook["cells"]})
+
 @app.route('/<user_id>/<notebook_id>', methods=['GET'])
 def load_notebook(user_id, notebook_id):
+    """Loads a specific notebook and ensures globals are properly initialized."""
+    # Fetch the user's data from MongoDB
     user_data = user_sessions.find_one({"user_id": user_id})
     if not user_data:
-        return jsonify({"error": "Notebook not found."}), 404
+        return jsonify({"error": "User not found."}), 404
     
+    # Find the notebook in the user's data
     notebook = next((nb for nb in user_data["notebooks"] if nb["notebook_id"] == notebook_id), None)
     if not notebook:
         return jsonify({"error": "Notebook not found."}), 404
+    
+    # Ensure the notebook has a globals dictionary
+    if "globals" not in notebook:
+        notebook["globals"] = {}  # Initialize without __builtins__
+    
+    # Add __builtins__ to the globals for execution
+    notebook["globals"]["__builtins__"] = __builtins__
+    
+    # Return the notebook's cells
     return jsonify({"cells": notebook["cells"]})
 
 # @app.route('/<user_id>/<notebook_id>/execute', methods=['POST'])
