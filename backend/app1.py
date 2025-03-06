@@ -1,16 +1,3 @@
-# from pymongo.mongo_client import MongoClient
-# from pymongo.server_api import ServerApi
-# uri = "mongodb+srv://root:1234@cluster0.15u0y.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
-# # Create a new client and connect to the server
-# client = MongoClient(uri, server_api=ServerApi('1'))
-# # Send a ping to confirm a successful connection
-# try:
-#     client.admin.command('ping')
-#     print("Pinged your deployment. You successfully connected to MongoDB!")
-# except Exception as e:
-#     print(e)
-
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import sys
@@ -29,37 +16,38 @@ from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
+
+app = Flask(__name__)
+CORS(app)
+
+# Connect to MongoDB Atlas
 MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
     raise ValueError("MONGO_URI is not set in .env file")
 
-# Connect to MongoDB Atlas
 client = MongoClient(MONGO_URI)
-db = client["NotebookDB"]  # Database name
-user_sessions = db["user_sessions"]  # Collection name
-
-app = Flask(__name__)
-CORS(app)
+db = client["NotebookDB"]
+user_sessions = db["user_sessions"]
 
 class CodeExecutor:
     def __init__(self, timeout=10):
         self.timeout = timeout
 
     def remove_comments(self, code):
-        code = re.sub(r'\#.*', '', code)  # Single-line comments
-        code = re.sub(r'""".*?"""', '', code, flags=re.DOTALL)  # Multi-line comments
-        code = re.sub(r"'''.*?'''", '', code, flags=re.DOTALL)  # Multi-line single quotes
-        return code  
+        code = re.sub(r'\#.*', '', code)
+        code = re.sub(r'""".*?"""', '', code, flags=re.DOTALL)
+        code = re.sub(r"'''.*?'''", '', code, flags=re.DOTALL)
+        return code
     
     def capture_output(self, code, session_globals):
         output = io.StringIO()
         error = None
         images = []
-
+        
         code_without_comments = self.remove_comments(code)
         if "input(" in code_without_comments:
             return {"text": "", "error": "User input is disabled.", "images": None}
-
+        
         def save_plot():
             try:
                 buf = io.BytesIO()
@@ -90,30 +78,58 @@ executor = CodeExecutor()
 
 @app.route('/<user_id>', methods=['GET'])
 def get_user_notebooks(user_id):
-    notebooks = list(user_sessions.find({"user_id": user_id}, {"_id": 0, "notebook_id": 1, "notebook_name": 1}))
-    return jsonify({"notebooks": notebooks})
+    user_data = user_sessions.find_one({"user_id": user_id})
+    if not user_data:
+        return jsonify({"notebooks": []})
+    
+    # Extract only notebook_name and notebook_id from each notebook
+    notebooks_in = [
+        {"notebook_id": nb["notebook_id"], "notebook_name": nb["notebook_name"]}
+        for nb in user_data.get("notebooks", [])
+    ]
+    
+    return jsonify({"notebooks": notebooks_in})
 
 @app.route('/<user_id>/create_notebook', methods=['POST'])
 def create_notebook(user_id):
     data = request.json
-    notebook_name = data.get("name", f"Notebook_{int(time.time())}")
-    notebook_id = f"notebook_{int(time.time())}"
+    notebook_name = data.get("name", f"Notebook_{user_id}_{int(time.time())}")
     
-    user_sessions.insert_one({
-        "user_id": user_id,
+    # Check if the notebook name already exists for the user
+    user_data = user_sessions.find_one({"user_id": user_id})
+    if user_data:
+        for notebook in user_data.get("notebooks", []):
+            if notebook["notebook_name"] == notebook_name:
+                return jsonify({"error": "Notebook name already exists."}), 400
+    
+    # Generate a unique notebook ID
+    notebook_id = f"notebook_{user_id}_{int(time.time())}"
+    
+    # Create the new notebook
+    new_notebook = {
         "notebook_id": notebook_id,
         "notebook_name": notebook_name,
         "cells": []
-    })
+    }
     
+    # Update the user's notebooks in the database
+    user_sessions.update_one(
+        {"user_id": user_id},
+        {"$push": {"notebooks": new_notebook}},
+        upsert=True
+    )
     return jsonify({"notebookId": notebook_id, "name": notebook_name})
 
 @app.route('/<user_id>/<notebook_id>', methods=['GET'])
 def load_notebook(user_id, notebook_id):
-    notebook = user_sessions.find_one({"user_id": user_id, "notebook_id": notebook_id}, {"_id": 0, "cells": 1})
+    user_data = user_sessions.find_one({"user_id": user_id})
+    if not user_data:
+        return jsonify({"error": "Notebook not found."}), 404
+    
+    notebook = next((nb for nb in user_data["notebooks"] if nb["notebook_id"] == notebook_id), None)
     if not notebook:
         return jsonify({"error": "Notebook not found."}), 404
-    return jsonify({"cells": notebook.get("cells", [])})
+    return jsonify({"cells": notebook["cells"]})
 
 @app.route('/<user_id>/<notebook_id>/execute', methods=['POST'])
 def execute_code(user_id, notebook_id):
@@ -122,33 +138,37 @@ def execute_code(user_id, notebook_id):
     if not code:
         return jsonify({"error": "Code is required."}), 400
     
-    notebook = user_sessions.find_one({"user_id": user_id, "notebook_id": notebook_id})
+    user_data = user_sessions.find_one({"user_id": user_id})
+    if not user_data:
+        return jsonify({"error": "Notebook not found."}), 404
+    
+    notebook = next((nb for nb in user_data["notebooks"] if nb["notebook_id"] == notebook_id), None)
     if not notebook:
         return jsonify({"error": "Notebook not found."}), 404
     
-    session_globals = {"__builtins__": __builtins__}  # Isolated environment
-    result = executor.capture_output(code, session_globals)
+    result = executor.capture_output(code, {})
+    new_cell = {"cell_id": f"cell_{int(time.time())}", "code": code, "output": result}
     
     user_sessions.update_one(
-        {"user_id": user_id, "notebook_id": notebook_id},
-        {"$push": {"cells": {"code": code, "output": result["text"]}}}
+        {"user_id": user_id, "notebooks.notebook_id": notebook_id},
+        {"$push": {"notebooks.$.cells": new_cell}}
     )
-    
     return jsonify(result)
 
 @app.route('/<user_id>/delete_notebook', methods=['POST'])
 def delete_notebook(user_id):
     data = request.json
     notebook_id = data.get('notebookId')
-    if not notebook_id:
-        return jsonify({"error": "Notebook ID is required."}), 400
     
-    user_sessions.delete_one({"user_id": user_id, "notebook_id": notebook_id})
+    user_sessions.update_one(
+        {"user_id": user_id},
+        {"$pull": {"notebooks": {"notebook_id": notebook_id}}}
+    )
     return jsonify({"message": "Notebook deleted successfully."})
 
 @app.route('/')
 def home():
-    return "Welcome to the main page"
+    return "Welcome to Notebook API"
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
