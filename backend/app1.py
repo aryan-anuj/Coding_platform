@@ -131,6 +131,30 @@ def load_notebook(user_id, notebook_id):
         return jsonify({"error": "Notebook not found."}), 404
     return jsonify({"cells": notebook["cells"]})
 
+# @app.route('/<user_id>/<notebook_id>/execute', methods=['POST'])
+# def execute_code(user_id, notebook_id):
+#     data = request.json
+#     code = data.get('code', '')
+#     if not code:
+#         return jsonify({"error": "Code is required."}), 400
+    
+#     user_data = user_sessions.find_one({"user_id": user_id})
+#     if not user_data:
+#         return jsonify({"error": "Notebook not found."}), 404
+    
+#     notebook = next((nb for nb in user_data["notebooks"] if nb["notebook_id"] == notebook_id), None)
+#     if not notebook:
+#         return jsonify({"error": "Notebook not found."}), 404
+    
+#     result = executor.capture_output(code, {})
+#     new_cell = {"cell_id": f"cell_{int(time.time())}", "code": code, "output": result}
+    
+#     user_sessions.update_one(
+#         {"user_id": user_id, "notebooks.notebook_id": notebook_id},
+#         {"$push": {"notebooks.$.cells": new_cell}}
+#     )
+#     return jsonify(result)
+
 @app.route('/<user_id>/<notebook_id>/execute', methods=['POST'])
 def execute_code(user_id, notebook_id):
     data = request.json
@@ -138,21 +162,49 @@ def execute_code(user_id, notebook_id):
     if not code:
         return jsonify({"error": "Code is required."}), 400
     
+    # Fetch the user's data from MongoDB
     user_data = user_sessions.find_one({"user_id": user_id})
     if not user_data:
-        return jsonify({"error": "Notebook not found."}), 404
+        return jsonify({"error": "User not found."}), 404
     
+    # Find the notebook in the user's data
     notebook = next((nb for nb in user_data["notebooks"] if nb["notebook_id"] == notebook_id), None)
     if not notebook:
         return jsonify({"error": "Notebook not found."}), 404
     
-    result = executor.capture_output(code, {})
-    new_cell = {"cell_id": f"cell_{int(time.time())}", "code": code, "output": result}
+    # Get the notebook's globals (or initialize if it doesn't exist)
+    if "globals" not in notebook:
+        notebook["globals"] = {}  # Initialize without __builtins__
     
+    # Add __builtins__ to the globals for execution
+    execution_globals = notebook["globals"].copy()
+    execution_globals["__builtins__"] = __builtins__
+    
+    # Execute the code in the notebook's globals
+    result = executor.capture_output(code, execution_globals)
+    
+    # Remove __builtins__ before saving to MongoDB
+    if "__builtins__" in execution_globals:
+        del execution_globals["__builtins__"]
+    
+    # Create a new cell with the code and output
+    new_cell = {
+        "cell_id": f"cell_{int(time.time())}",
+        "code": code,
+        "output": result
+    }
+    
+    # Update the notebook in the database:
+    # 1. Add the new cell to the notebook's cells
+    # 2. Update the notebook's globals
     user_sessions.update_one(
         {"user_id": user_id, "notebooks.notebook_id": notebook_id},
-        {"$push": {"notebooks.$.cells": new_cell}}
+        {
+            "$push": {"notebooks.$.cells": new_cell},
+            "$set": {"notebooks.$.globals": execution_globals}
+        }
     )
+    
     return jsonify(result)
 
 @app.route('/<user_id>/delete_notebook', methods=['POST'])
