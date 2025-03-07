@@ -14,19 +14,7 @@ const DEFAULT_CELLS: CellType[] = [
   {
     id: nanoid(),
     type: 'code',
-    content: `# Example: Data visualization with matplotlib
-import numpy as np
-import matplotlib.pyplot as plt
-
-x = np.linspace(0, 10, 100)
-y = np.sin(x)
-
-plt.plot(x, y)
-plt.title('Sine Wave')
-plt.xlabel('x')
-plt.ylabel('sin(x)')
-plt.grid(True)
-plt.show()`,
+    content: ``,
   },
 ];
 
